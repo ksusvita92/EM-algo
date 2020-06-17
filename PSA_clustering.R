@@ -4,22 +4,21 @@
 ## Output: a list of formed clusters
 ## attr: class 'list'
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-require(dplyr)
-
 getClusters <- function(dist, thrsh) {
+  require(dplyr)
+  
   #--- //Func. to change dist to data frame
-  distToDF = function(inDist, val.name) {
-    if (class(inDist) != "dist") stop("wrong input type")
+  distToDF <- function(inDist, val.name) {
+    if(class(inDist)!="dist") stop("wrong input type")
     A <- attr(inDist, "Size")
-    B <- if (is.null(attr(inDist, "Labels"))) paste("case",sequence(A)) else attr(inDist, "Labels")
-    if (isTRUE(attr(inDist, "Diag"))) attr(inDist, "Diag") <- FALSE
-    if (isTRUE(attr(inDist, "Upper"))) attr(inDist, "Upper") <- FALSE
+    B <- if(is.null(attr(inDist, "Labels"))) paste("case",sequence(A)) else attr(inDist, "Labels")
+    if(isTRUE(attr(inDist, "Diag"))) attr(inDist, "Diag") <- FALSE
+    if(isTRUE(attr(inDist, "Upper"))) attr(inDist, "Upper") <- FALSE
     
-    df = data.frame(
-      row = B[unlist(lapply(sequence(A)[-1], function(x) x:A))],
-      col = rep(B[-length(B)], (length(B)-1):1),
-      value = as.vector(inDist),
-      stringsAsFactors=F)
+    df <- data.frame(row=B[unlist(lapply(sequence(A)[-1], function(x) x:A))],
+                     col=rep(B[-length(B)], (length(B)-1):1),
+                     value=as.vector(inDist),
+                     stringsAsFactors=F)
     names(df) = c("row", "col", val.name)
     return(df)
   }
@@ -29,7 +28,8 @@ getClusters <- function(dist, thrsh) {
   caseName <- with(distDF_, unique(c(row,col)))
   Cluster_ <- list()
   member_ <- NULL
-  case <- caseName[1]; caseIndex <- caseName[1]
+  case <- caseName[1]
+  caseIndex <- caseName[1]
   id_ <- 1
   
   while(case %in% caseIndex & !(is.na(case))) {
