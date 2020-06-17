@@ -172,11 +172,11 @@ rbind(checkingWD$summary, checkingND$summary)
 
 ## Over/Underestimation
 
-
+Here we explore what happen if we guess the number of components $k$ incorrectly.
 
 ```{r, message=F, warning=F}
-result=NULL
-summary=NULL
+result <- NULL
+summary <- NULL
 disctre. <- c(F,T)
 for(i in 1:4) {
   for(j in disctre.) {
@@ -186,12 +186,13 @@ for(i in 1:4) {
 }
 
 cleanData <- result %>% filter(!(is.na(est_alpha)))
-ggplot(cleanData) + geom_boxplot(aes(x=EMcomp,y=abs(est_alpha-true_alpha),fill=status),alpha=.3) + 
-  facet_wrap(~k) + xlab("EM-algo components") + ylab("error alpha") +
+ggplot(cleanData) + geom_boxplot(aes(x=EMcomp,y=abs(est_alpha-true_alpha)/true_alpha,fill=status),alpha=.3) + 
+  facet_wrap(~k) + xlab("EM-algo components") + ylab("relative error of alpha") +
   theme(legend.position="bottom", legend.title=element_blank())
-ggplot(cleanData) + geom_boxplot(aes(x=EMcomp, y=abs(est_beta-true_beta), fill=status), alpha=.3) +
-  facet_wrap(~k) + xlab("EM-algo components") + ylab("error beta") +
+ggplot(cleanData) + geom_boxplot(aes(x=EMcomp, y=abs(est_beta-true_beta)/true_beta, fill=status), alpha=.3) +
+  facet_wrap(~k) + xlab("EM-algo components") + ylab("relative error of beta") +
   theme(legend.position="bottom", legend.title=element_blank())
-
-
+ggplot(cleanData) + geom_boxplot(aes(x=EMcomp, y=abs(est_mixmean-true_mean)/true_mean, fill=status), alpha=.3) +
+  facet_wrap(~k) + xlab("EM-algo components") + ylab("relative error of mean serial interval") +
+  theme(legend.position="bottom", legend.title=element_blank())
 ```
