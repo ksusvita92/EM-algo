@@ -1,0 +1,197 @@
+---
+title: "How EM-algo works"
+author: "Kurnia Susvitasari"
+date: "04/06/2020"
+output: 
+  html_document:
+    css: spacing.css
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: TRUE
+    fig_height: 4
+---
+
+# Introduction
+
+The objective of this analysis is to understand how EM-algo works. We will briefly describe the Rscript `PSA_EM algo.R`. We start from a collection of data points that represents **serial interval**. To know this data, (at least for Pairwise-Survival analysis project), we need to have transmission tree which represents who-infected-whom, see `EMalgo.lineageB.1.1.13_v1.html`. 
+
+We assume that **a case can only infect those of the same cluster with him and if he gets infected prior to his infectees**. Here, we define two/more cases to be in the same cluster if their DNA distance is no more than a given threshold, say $\tau$. Sometimes, the epi data records only the onset time, instead of infection time. Thus, we will get serial interval, not generation time, as the data points for EM-algo.
+
+## Why do we use mixture model?
+
+In Pairwise-Survival project, we assume that a transmission path between A to B, exists some unsample cases. We means that instead of A -> B, we assume that A -> x -> ... -> x -> B. Suppose that the serial interval of case $i,j$, $T_{ij} \sim \Gamma(\alpha, \beta)$ and each transmission is an independent event. Thus,
+
+  + if $i$ -> $j$, i.e. $i$ directly infected $j$, $T_{ij} \sim \Gamma(\alpha, \beta)$,
+  + if $i$ -> x -> $j$, then $T_{ij} \sim \Gamma(2\alpha, \beta)$,
+  + if $i$ -> x -> x -> $j$, then $T_{ij} \sim \Gamma(3\alpha, \beta)$,
+  + if $i$ -> x -> x -> x -> $j$, then $T_{ij} \sim \Gamma(4\alpha, \beta)$.
+
+Notice that the second to forth point is basically a convolusion of independent Gamma distribution. Thus, considering there are unsampled cases in the transmission path of 2 cases, our serial interval data will follow mixture model
+
+\[
+  f(x:\alpha, \beta) = w_1f_1(x:\alpha, \beta) + \ldots + w_4f_4(x:\alpha, \beta), \qquad (*)
+\]
+
+where $f_m$ is the pdf of $\Gamma(m \alpha, \beta)$ and $w_m$ is a weight with property so that $\sum_m w_m=1$. We seek to estimate $(w_1, \ldots, w_4, \alpha, \beta)$ using our EM-algo.
+
+## Discretization
+
+Almost every data records time of infection or symptom onset as dates. Therefore, it's common to have integer generation time or serial interval. This is actually incorrect. Here, we adopt Jacco Wallinga's method of "discretization". 
+
+**How does discretization work?**
+
+To get the probability of $T=t$, we did the following
+
+\[
+  Pr(T=t) = \int_{t-1}^{t+1} f(x: \alpha, \beta) \cdot g(x) dx
+\]
+
+where $g(x)$ is a pdf of [triangular distribution](https://en.wikipedia.org/wiki/Triangular_distribution). We want the probability of $T$ is the highest when it's near $t$. So we assume that $g(x) \sim Triangular(t-1, t+1, t)$. In the case where $t=0$, we assume that $g(x) \sim Triangular(0,1,0)$. Therefore,
+
+\begin{align}
+  g(x) &=
+  \begin{cases}
+    x-t+1; \qquad t-1 \leq x < t \\
+    t+1-x; \qquad t \leq x < t+1 \\
+    2(1-x); \qquad t=0 \\
+    0; \qquad  \text{otherwise}.
+  \end{cases}
+\end{align}
+
+See **PSA.log_gamma mixture model.pdf** for more detail.
+
+## How How does EM-algo work?
+
+EM-algo consists of E-step (Expectation) and M-step (Maximization). We start with the serial interval/generation time (depends on what pairwise data we get. We will refer serial interval for this analysis) and initial value of shape/scale, denoted by $(\alpha_0, \beta_0)$. In our Rscript `PSA_EM algo.R`, if we let both $(\alpha_0, \beta_0)$ NULL, we will use MoM (Method of Moment) estimation to get initial shape/scale.
+
+**The E-step**
+
+Suppose that $\textbf{x}$ represents a vector of serial interval. In E-step, we first compute the relative probability of a data point $x_i$ to belong to one of the component. For example, for each case $i$, suppose that:
+
+  + $d_1=Pr(T=t:x \sim \Gamma(\alpha, \beta))$,
+  + $d_2=Pr(T=t:x \sim \Gamma(2\alpha, \beta))$,
+  + $d_3=Pr(T=t:x \sim \Gamma(3\alpha, \beta))$,
+  + $d_4=Pr(T=t:x \sim \Gamma(4\alpha, \beta))$,
+
+represent the probability of a data point $x$ to be in $k$-component. We then compute the following relative probability of case $i$ in the $k$-component, as follows
+
+\begin{align}
+  \omega_i^{(k)} &= \frac{d_k}{\sum_k d_k}.
+\end{align}
+
+Finally, we define the weight $w_k$, as follows
+
+\[
+  w_k = \frac{\sum_i \omega_i^{(k)}}{\sum_i 1}= mean(\omega_i^{(k)}).
+\]
+
+Notice that the reason why we use relative probability is because we want to make sure that the constraint $\sum_k w_k=1$ is fulfilled. The E-step finishes by computing the **weighted mean**, $\mu_w$, and **weighted variance**, $s_w^2$. Since we only need to estimate $(\alpha,\beta)$, we define $\mu_w$ and $s_w^2$ as follows
+
+\begin{align}
+  \mu_w &= \frac{\sum_i \omega_i^{(1)}x_i}{\sum_i 1}, \\
+  s_w^2 &= \frac{V_1}{V_1^2-V_2} \sum_i \omega_i^{(1)}(x_i-\mu_w),
+\end{align}
+
+where $V_1=\sum_i \omega_i^{(1)}$ and $V_2=\sum_i (\omega_i^{(1)})^2$.
+
+**M-step**
+
+In this step, we are going to update the estimates until they do not change anymore, i.e. until they converge. The term convergence in here means that, for $n$-iteration, the change of 
+
+\[
+  \lvert \alpha^{(n)}-\alpha^{(n-1)} \rvert + \lvert \beta^{(n)}-\beta^{(n-1)} \rvert < \varepsilon, \qquad (**)
+\]  
+
+where $\varepsilon$ is our fixed tolerance. Notice that we use MoM to estimate $(\alpha,\beta)$, that is
+
+\[
+  \hat{\alpha}^{(n)}=\frac{{\mu_w^2}^{(n)}}{{s_w^2}^{(n)}}, \qquad
+  \hat{\beta}^{(n)}=\frac{{s_w^2}^{(n)}}{{\mu_w}^{(n)}}.
+\]
+
+This means, we will also need to update $\omega_i^{(k)}$ to update the $\mu_w$ and $s_w^2$, as well. The M-step will stop until the condition $(**)$ is satisfied.
+
+After $(\hat{\alpha}^{(n)}, \hat{\beta}^{(n)})$ no longer changed, **we get the paramater-estimates**
+
+\[
+  \tilde{\alpha} = \frac{\hat{\alpha}^{(n)}}{k}, \qquad \tilde{\beta}=\hat{\beta}^{(n)}/ w_1.
+\]
+
+Notice here that $\tilde{\beta}$ comes from $\mu_w$, which is derived from the data points that are assumed coming from the first component. Therefore, we know that $w_1 \cdot \Gamma(\alpha, \beta) \sim \Gamma \left(\alpha, \frac{\beta}{w_1}\right)$ and $\tilde{\alpha} = \frac{\hat{\alpha}^{(n)}}{k}$, where $k$ is the number of components used in the mixture model.
+
+# Sanity check
+
+To check if our method `PSA_EM algo.R` works, we implement this on the random dataset. We first generate random samples from the mixture model with pdf $f(x|\alpha, \beta)$. Below is the algorithm to do this.
+
+**Generate random samples from a mixture model**
+
+Suppose that we want to generate $n$ samples from mixture model with pdf $(*)$. Say we determine the weight $w_m=\pi_m$, where $\sum_m \pi_m=1$. Thus,
+
+  + Generate $\textbf{u} \sim \mathcal{U}(0,1)$, where $\textbf{u}$ is a vector of $n$ standard uniform random variables.
+  + $\textbf{for}$ each $i$: if $u_i \in [\sum_{k=1}^m \pi_k, \sum_{k=1}^{m+1} \pi_k)$, generate a sample from $\Gamma(m\alpha, \beta)$.
+  
+Once we generate these samples, we will implement EM-algo to get $(\tilde{\alpha}, \tilde{\beta})$.
+
+Here, we will draw 100 random samples from mixture model $(*)$ and then perform EM-algo to obtain the parameter estimations. We will repeat this procedure 1000 times to perform linear regression between true parameters vs estimates.
+
+```{r, message=F, echo=c(2:5,6), warning=F}
+require(ggplot2); require(gridExtra); set.seed(1234)
+source("sanity check.R")
+checkingND <- EMsanityCheck(nrep=1000, k=4, rounding=T)
+checkingWD <- EMsanityCheck(nrep=1000, k=4, discretization=T, rounding=T)
+
+checking <- bind_rows(checkingND$record, checkingWD$record)
+
+pl1 <- ggplot(checking %>% filter(!(is.na(est_alpha)))) +
+  geom_point(aes(x=est_alpha, y=true_alpha, col=status), alpha=.3) +
+  xlab("estimated alpha") + ylab("true alpha") +
+  theme(legend.position="bottom", legend.direction="vertical", legend.title=element_blank())
+pl2 <- ggplot(checking %>% filter(!(is.na(est_beta)))) +
+  geom_point(aes(x=est_beta, y=true_beta, col=status), alpha=.3) +
+  xlab("estimated beta") + ylab("true beta") +
+  theme(legend.position="bottom", legend.direction="vertical", legend.title=element_blank())
+pl3 <- ggplot(checking %>% filter(!(is.nan(est_mixmean)))) +
+  geom_point(aes(x=est_mixmean, y=true_mean, col=status), alpha=.3) +
+  xlab("estimated mixture mean") + ylab("true mean (true alpha * true beta)") +
+  theme(legend.position="bottom", legend.direction="vertical", legend.title=element_blank())
+
+grid.arrange(pl1,pl2,pl3, nrow=1)
+```
+
+We perform linear regression between true parameters and estimates. Below is some variables used in the analysis:
+
+  + `true_beta` implies real value of generated $\beta$.
+  + `true_alpha` implies real value of generated $\alpha$.
+  + `est_beta` implies estimated value of $\beta$.
+  + `est_alpha` implies estimated value of $\alpha$.
+  + `Discrete.=1` implies EM-algo with discretization
+  
+```{r, warning=F, message=F, echo=F}
+rbind(checkingWD$summary, checkingND$summary)
+```
+
+## Over/Underestimation
+
+
+
+```{r, message=F, warning=F}
+result=NULL
+summary=NULL
+disctre. <- c(F,T)
+for(i in 1:4) {
+  for(j in disctre.) {
+    trial <- EMoverUnderEst(nrep=100, k=i, discretization=j, rounding = T)
+    result <- bind_rows(result, trial$record)
+  }
+}
+
+cleanData <- result %>% filter(!(is.na(est_alpha)))
+ggplot(cleanData) + geom_boxplot(aes(x=EMcomp,y=abs(est_alpha-true_alpha),fill=status),alpha=.3) + 
+  facet_wrap(~k) + xlab("EM-algo components") + ylab("error alpha") +
+  theme(legend.position="bottom", legend.title=element_blank())
+ggplot(cleanData) + geom_boxplot(aes(x=EMcomp, y=abs(est_beta-true_beta), fill=status), alpha=.3) +
+  facet_wrap(~k) + xlab("EM-algo components") + ylab("error beta") +
+  theme(legend.position="bottom", legend.title=element_blank())
+
+
+```
