@@ -1,0 +1,130 @@
+---
+title: "EM-algo on COG UK lineage B.1.13 v2"
+# author: "Kurnia Susvitasari"
+date: "9/06/2020"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    number_sections: TRUE
+    fig_height: 4
+---
+
+# Summary and goal
+
+The objective of this analysis is to implement how EM-algorithm works on a collection of sample transmission trees.
+
+# Data preparation
+
+COVID-19 UK (COG UK) Consortium has been created to deliver large-scale and rapid whole-genome virus sequencing of the current COVID-19 pandemic to local NHS centres and the UK government. It is made up of an innovative partnership of NHS organisations, the four Public Health Agencies of the UK, the Wellcome Sanger Institute and over twelve academic partners providing sequencing and analysis capacity with the support from the UK Department of Health and Social Care (DHSC), UK Research and Innovation (UKRI) and the Wellcome Trust, administered by UK Research and Innovation. The data used in this analysis is from COG UK, see [here](https://www.cogconsortium.uk/). 
+
+We use trimmed allignment sequence, which consists of 14277 sequences (last updated on 2020-05-08), as well as its corresponding metadata. For this analysis purpose, we only use cases from **lineage B.1.13**. We then filter the cases that have both DNA sequence and completed record metadata. The data structure is as follows:
+
+  + `sequence_name`: the allignment's name of format *England/[county]-[sequence number]/[year]*.
+  + `lineage_support`: (unclear)
+  + `epi_week`: (unclear)
+  + `sample_date`: the sample date of corresponding sequence.
+  
+A total of 40 cases is acquired and used. For the purpose of this analysis, **we assume**:
+
+  + all cases in lineage B.1.13 represent cases sampled in population,
+  + we pretend `sample_date` as the infection date,
+  + no infection prior to symptom onset,
+  + there are some unsampled cases between transmission path $i$ -> j.
+  
+The last assumption implies that the difference between 2 `sample_date` represents serial interval of the corresponding cases. Here, we use SNP cutoff to determine if two/more cases are in the same cluster. We adopted function **`ape::dist.dna(..., model="N")`**. The histogram of lineage B.1.13 DNA distance is presented below.
+
+```{r, message=F, eval=T}
+source("EMalgo.lineageB.1.13_dataprep v2.R")
+```
+
+Summary statistic of the DNA distance:
+
+  + $Q_1=1, Q_2=2, Q_3=3$, where $Q_i$ represents the $i$-th quantile of the DNA distance,
+  + $min=0, \mu=2.133, max=7$, where $\mu$ represents the mean of the DNA distance.
+  
+In this analysis, we consider 3 lists of clusters: `clustThrsh`, `clustThrsh1`, and `clustThrsh2`. The clustering is done by choosing **threshold 0, 1, 2, and 3**, respectively. As a result, we get:
+  
+  + 5 clusters with 18 isolates in `clustThrsh`,
+  + 3 clusters with 6 isolates in `clustThrsh1`,
+  + 1 clusters with 1 isolate in `clustThrsh2`,
+  + 1 cluster in `clustThrsh3`
+
+# Sample $n=100$ transmission trees
+
+In this section, we implement EM-algorithm on **lineage B.1.13 with cutoff=0, cutoff=1, cutoff=2, and cutoff=3 dSNP**. We sample $n=100$ sampled transmission trees with no repetition for each cutoffs. 
+
+```{r, message=F, warning=F, results='hide', fig.keep=2, eval=T, message=F}
+set.seed(1234)
+source("EMalgo.lineageB.1.13_tt samples v2.R")
+```
+```{r, echo=F}
+cat("@import [data.frame]'EMest': records of EM-algo estimations", "\n")
+cat("@import [sampledTT]'sampledTT': 100 sampled transmission trees and serial interval with cutoff=0 dSNP","\n")
+cat("@import [sampledTT]'sampledTT1': 100 sampled transmission trees and serial interval with cutoff=1 dSNP","\n")
+cat("@import [sampledTT]'sampledTT2': 100 sampled transmission trees and serial interval with cutoff=2 dSNP","\n")
+cat("@import [sampledTT]'sampledTT3': 100 sampled transmission trees and serial interval with cutoff=3 dSNP","\n")
+```
+
+
+# Perform EM-algo on each sampled TT
+
+In this analysis, we assume unsampled case(s) between transmission path of A and B. Instead of A -> B, we take into consideration, where A may infected other unsampled case(s) before he infected B. This means that,
+
+\[
+  \text{A -> x -> ... -> x -> B}
+\]
+
+We consider upto 4 unsampled cases are possible between transmission path A and B. The reason of this is given that A and B has narrow SNP distance, so it is unlikely to have more than 4 unsampled cases. See Jacco Wallinga's [ICC interval](https://academic.oup.com/aje/article/180/9/865/2739204) for reference.
+
+Now suppose that the serial interval of case $i,j$, $T_{ij} \sim \Gamma(\alpha, \beta)$ and each transmission is an independent event. Thus,
+
+  + if $i$ -> $j$, i.e. $i$ directly infected $j$, $T_{ij} \sim \Gamma(\alpha, \beta)$,
+  + if $i$ -> x -> $j$, then $T_{ij} \sim \Gamma(2\alpha, \beta)$,
+  + if $i$ -> x -> x -> $j$, then $T_{ij} \sim \Gamma(3\alpha, \beta)$,
+  + if $i$ -> x -> x -> x -> $j$, then $T_{ij} \sim \Gamma(4\alpha, \beta)$.
+  
+The second to forth point is basically a convolusion of independent Gamma distribution. Therefore, the serial interval of case $i,j$ follows a distribution with the following pdf
+
+\[
+  f(x:\alpha, \beta) = w_1f_1(x:\alpha, \beta) + \ldots + w_4f_4(x:\alpha, \beta),
+\]
+
+where $f_m$ is the pdf of $\Gamma(m \alpha, \beta)$ and $w_m$ is a weight with property so that $\sum_m w_m=1$. We seek to estimate $(w_1, \ldots, w_4, \alpha, \beta)$.
+
+Here, we perform EMa-algo with and without discretization. In **Sanity-check-of-EMalgo.html**, EM-algo without discretization estimates the parameter $(\alpha, \beta)$ more accurately than with discretization.
+
+## EM-algo on lineage B.1.13
+
+We consider how sensitive the change of parameter $(\alpha, \beta)$ when we consider only 1, 2, 3, or 4 component(s). This component implies how many mixture we consider in function $f$. For example, 2-component means we consider the scenario: A -> x -> B; 3-component means that A -> x -> x -> B. 
+
+The following is the estimation of $(\alpha, \beta)$ from 100 sampled transmission trees.
+
+```{r}
+EMest$ncomp <- paste("ncom", EMest$ncomp, sep="=")
+pl1 <- ggplot(EMest, aes(y=alpha)) +
+  geom_boxplot(aes(x=ncomp, fill=status), alpha=.3) +
+  facet_wrap(~cutoff) + theme(legend.position="") + xlab("")
+pl2 <- ggplot(EMest, aes(y=beta)) +
+  geom_boxplot(aes(x=ncomp, fill=status), alpha=.3) +
+  facet_wrap(~cutoff) + theme(legend.position="") + xlab("")
+
+pl1; pl2
+```
+
+Notice that each TT sample will produce one estimation of $(\alpha, \beta)$. With 100 samples, we will get 100 estimate-points of $(\alpha, \beta)$. These estimate-points are then used to produce plots above. We repeat this analysis for difference number of components.
+
+We also calculate the expectation of the serial interval. We define the expectation of $T$ as follows
+
+\begin{align}
+  \mathcal{E}(T) = w_1*(\alpha*\beta) + w_2*(2\alpha*\beta) + w_3*(3\alpha*\beta) + w_4*(4\alpha*\beta).
+\end{align}
+
+In the following, we acquire the expectation of serial interval $T$ with different number of component.
+
+```{r, eval=T, message=F}
+EMest$meanSI <- with(EMest, (w1*alpha*beta+w2*2*alpha*beta+ w3*3*alpha*beta+w4*4*alpha*beta))
+summ <- EMest %>% group_by(ncomp, cutoff) %>% 
+  summarise(mean=mean(meanSI), max=max(meanSI), min=min(meanSI))
+summ
+```
