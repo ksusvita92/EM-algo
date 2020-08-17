@@ -5,17 +5,16 @@
 #---- //@import: package::dplyr
 #----------------------------------------------------end
 require(dplyr)
-rootProject <- "/Users/Vita/sfuvault/RProjects/Pairwise Survival Analysis" #--- //change this path to where you store PSA_EM algo.R
-initwd_ <- getwd()
+rootProject <- "/Users/Vita/sfuvault/RProjects/Pairwise Survival Analysis"
 setwd(rootProject)
-source("PSA_EM algo.R")
-setwd(initwd_) #--- //change into your initial working directory
+source("PSA_EM algo with restriction.R")
+setwd(paste(rootProject, "[Pairwise Survival] EM algo analysis", sep="/"))
 
 #------------ Sanity check -------------------------------
 #---- //objectives: * generate function to draw random sample with mixture model pdf
 #                   * this data implies serial interval
 #----------------------------------------------------end
-rmixGamma <- function(n, alpha, beta, weight) { #--- //a function to generate random samples with a mixture Gamma dist.
+rmixGamma <- function(n, alpha, beta, weight) {
   m <- length(weight)
   U <- runif(n)
   rsamp <- numeric(n); omega <- numeric(n)
@@ -33,13 +32,13 @@ rmixGamma <- function(n, alpha, beta, weight) { #--- //a function to generate ra
   }
   return(rsamp)
 }
-
-EMsanityCheck <- function(nrep=50, k=4, discretization=F, rounding=F) { #--- //func. to perform sanity check
+EMsanityCheck <- function(nrep=50, k=4, discretization=F, rounding=F) {
   nobs <- 100
   result <- NULL
+  i <- 1
   
-  for(i in 1:nrep) {
-    shape <- runif(1,1,5); scale <- runif(1,1,5)
+  while(i<=nrep) {
+    shape <- runif(1,1,3); scale <- runif(1,2,5)
     weight <- runif(k)
     weight <- weight/sum(weight)
     rsamp <- rmixGamma(nobs, shape, scale, weight)
@@ -47,22 +46,24 @@ EMsanityCheck <- function(nrep=50, k=4, discretization=F, rounding=F) { #--- //f
     if(discretization) {estimates <- EMgamma(rsamp, k); Discrete. <- c(1,1,1)}
     else {estimates <- EMgammaND(rsamp, k); Discrete. <- c(0,0,0)}
     
-    record <- data.frame(true_alpha=shape, true_beta=scale,
-                         est_alpha=estimates$parameter[1],
-                         est_beta=estimates$parameter[2],
-                         true_mean=shape*scale,
-                         est_mixmean=sum(prod(estimates$parameter)*(1:4)*estimates$weights),
-                         crude_mean=mean(rsamp), 
-                         w1=estimates$weights[1], w2=estimates$weights[2],
-                         w3=estimates$weights[3], w4=estimates$weights[4],
-                         status=ifelse(discretization, "with discrete.", "without discrete."))
-    result <- bind_rows(result,record)
+    if(estimates$niter<1000 & max(estimates$weights)>0.7) {
+      record <- data.frame(true_alpha=shape, true_beta=scale,
+                           est_alpha=estimates$parameter[1],
+                           est_beta=estimates$parameter[2],
+                           true_mean=shape*scale,
+                           est_mean=prod(estimates$parameter),
+                           crude_mean=mean(rsamp), niter=estimates$niter,
+                           w1=estimates$weights[1], w2=estimates$weights[2],
+                           w3=estimates$weights[3], w4=estimates$weights[4],
+                           status=ifelse(discretization, "with discrete.", "without discrete."))
+      result <- bind_rows(result,record)
+      i <- i+1
+    }
     #if((i %% 100)==0) cat("iteration left:", nrep-i, "\n")
   }
-  #--- //perform linreg analysis and omit the intercept
-  linregAlpha <- lm(true_alpha~est_alpha-1, data=result)
-  linregBeta <- lm(true_beta~est_beta-1, data=result)
-  linregMean <- lm(true_mean~est_mixmean-1, data=result)
+  linregAlpha <- lm(est_alpha~true_alpha-1, data=result)
+  linregBeta <- lm(est_beta~true_beta-1, data=result)
+  linregMean <- lm(est_mean~true_mean-1, data=result)
   param <- rbind(summary(linregAlpha)$coef, summary(linregBeta)$coef, summary(linregMean)$coef)
   param <- cbind(param, Discrete.)
   
@@ -90,7 +91,7 @@ EMoverUnderEst <- function(nrep=50, k=1, discretization=F, rounding=F) {
         record <- data.frame(true_alpha=shape, true_beta=scale,
                              est_alpha=est$parameter[1], est_beta=est$parameter[2],
                              true_mean=shape*scale, 
-                             est_mixmean=sum(prod(est$parameter)*(1:4)*est$weights),
+                             est_mean=prod(est$parameter),
                              crude_mean=mean(rsamp), 
                              w1=est$weights[1], w2=est$weights[2], w3=est$weights[3], w4=est$weights[4],
                              status=ifelse(discretization, "with discrete.", "without discrete."),
@@ -103,7 +104,7 @@ EMoverUnderEst <- function(nrep=50, k=1, discretization=F, rounding=F) {
         record <- data.frame(true_alpha=shape, true_beta=scale,
                              est_alpha=est$parameter[1], est_beta=est$parameter[2],
                              true_mean=shape*scale, 
-                             est_mixmean=sum(prod(est$parameter)*(1:4)*est$weights),
+                             est_mean=prod(est$parameter),
                              crude_mean=mean(rsamp), 
                              w1=est$weights[1], w2=est$weights[2], w3=est$weights[3], w4=est$weights[4],
                              status=ifelse(discretization, "with discrete.", "without discrete."),
@@ -122,10 +123,10 @@ EMoverUnderEst <- function(nrep=50, k=1, discretization=F, rounding=F) {
   linregBeta3 <- lm(true_beta~est_beta-1, data=(result %>% filter(EMcomp=="EMcomp=3")))
   linregBeta4 <- lm(true_beta~est_beta-1, data=(result %>% filter(EMcomp=="EMcomp=4")))
 
-  linregMean1 <- lm(true_mean~est_mixmean-1, data=(result %>% filter(EMcomp=="EMcomp=1", !(is.nan(est_mixmean)))))
-  linregMean2 <- lm(true_mean~est_mixmean-1, data=(result %>% filter(EMcomp=="EMcomp=2", !(is.nan(est_mixmean)))))
-  linregMean3 <- lm(true_mean~est_mixmean-1, data=(result %>% filter(EMcomp=="EMcomp=3", !(is.nan(est_mixmean)))))
-  linregMean4 <- lm(true_mean~est_mixmean-1, data=(result %>% filter(EMcomp=="EMcomp=4", !(is.nan(est_mixmean)))))
+  linregMean1 <- lm(true_mean~est_mean-1, data=(result %>% filter(EMcomp=="EMcomp=1", !(is.nan(est_mean)))))
+  linregMean2 <- lm(true_mean~est_mean-1, data=(result %>% filter(EMcomp=="EMcomp=2", !(is.nan(est_mean)))))
+  linregMean3 <- lm(true_mean~est_mean-1, data=(result %>% filter(EMcomp=="EMcomp=3", !(is.nan(est_mean)))))
+  linregMean4 <- lm(true_mean~est_mean-1, data=(result %>% filter(EMcomp=="EMcomp=4", !(is.nan(est_mean)))))
 
   temp <- cbind(k=rep(k,12), ncomp=rep(c(1:4), times=3))
   param <- rbind(summary(linregAlpha1)$coef, summary(linregAlpha2)$coef,
