@@ -4,5 +4,6 @@ R scripts:
       - *alpha*: shape parameter
       - *beta*: scale parameter
       - *weight*: weight vector for each component.
+     
      The 
   - 
