@@ -11,4 +11,4 @@ R scripts:
        - *discretization*: default is F. 
        - *rounding*: default is F. If TRUE, the generated data points will be rounded to represent real SI.
        
-  - bbb
+ 
